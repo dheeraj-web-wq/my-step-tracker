@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fitness Tracker Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            text-align: center;
+            background: linear-gradient(180deg, #000428 0%, #004e92 100%);
+            color: white;
+            margin: 0;
+            padding: 20px 0 50px 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { font-weight: 300; letter-spacing: 3px; margin-bottom: 10px; }
+
+        /* Step Disk Styling */
+        .step-disk {
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 4px solid rgba(0, 210, 255, 0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 20px auto;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            transition: all 0.5s ease;
+        }
+
+        .step-value { font-size: 58px; font-weight: bold; color: #00d2ff; }
+        .sub-stats { font-size: 18px; margin-top: 5px; font-weight: 500; }
+        .cal { color: #2ecc71; margin-right: 15px; }
+        .dist { color: #f1c40f; }
+
+        .goal-reached { border-color: #2ecc71; box-shadow: 0 0 30px rgba(46, 204, 113, 0.4); }
+
+        /* Main Button */
+        .track-btn {
+            padding: 15px 45px;
+            border-radius: 50px;
+            border: none;
+            background: #00d2ff;
+            color: #000428;
+            font-weight: bold;
+            font-size: 18px;
+            cursor: pointer;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
+        }
+
+        /* History Container & Tabs */
+        .history-container {
+            width: 90%;
+            max-width: 500px;
+            background: rgba(255, 255, 255, 0.08);
+            padding: 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chart-tabs {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 30px;
+            padding: 5px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: white;
+            padding: 8px 15px;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 20px;
+            transition: 0.3s;
+            flex: 1;
+        }
+
+        .tab-btn.active { background: #00d2ff; color: #000428; font-weight: bold; }
+        
+        .chart-wrapper { position: relative; height: 250px; width: 100%; }
+    </style>
+</head>
+<body onload="initApp()">
+
+    <h1>ACTIVITY</h1>
+    <p id="status" style="font-size: 12px; color: yellow;">Status: Waiting for sensors...</p>
+    <div class="step-disk" id="disk">
+        <span style="font-size:12px; opacity:0.6; letter-spacing: 1px;">STEPS</span>
+        <span id="steps" class="step-value">0</span>
+        <div class="sub-stats">
+            <span class="cal"><span id="calories">0</span> kcal</span>
+            <span class="dist"><span id="distance">0</span> km</span>
+        </div>
+    </div>
+
+    <button class="track-btn" onclick="startCounting()">Start Tracking</button>
+
+    <div class="history-container">
+        <div class="chart-tabs">
+            <button class="tab-btn active" onclick="switchView('week', this)">Weekly</button>
+            <button class="tab-btn" onclick="switchView('month', this)">Monthly</button>
+            <button class="tab-btn" onclick="switchView('year', this)">Yearly</button>
+        </div>
+        <div class="chart-wrapper">
+            <canvas id="mainChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let steps = 0;
+        let lastMagnitude = 0;
+        let lastStepTime = 0;
+        let currentView = 'week';
+        let charts = {};
+
+        function initApp() {
+            checkNewDay();
+            renderCharts();
+        }
+
+        function checkNewDay() {
+            const today = new Date().toLocaleDateString();
+            const lastDate = localStorage.getItem("stepDate");
+            if (lastDate !== today) {
+                steps = 0;
+                localStorage.setItem("dailySteps", 0);
+                localStorage.setItem("stepDate", today);
+            } else {
+                steps = parseInt(localStorage.getItem("dailySteps")) || 0;
+            }
+            updateDisplay();
+        }
+
+        function updateDisplay() {
+            const cal = (steps * 0.045);
+            const dist = (steps * 0.000762);
+            
+            document.getElementById("steps").innerText = steps.toLocaleString();
+            document.getElementById("calories").innerText = cal.toFixed(1);
+            document.getElementById("distance").innerText = dist.toFixed(2);
+            
+            if (cal >= 200) document.getElementById("disk").classList.add("goal-reached");
+
+            // Save history
+            const dateKey = new Date().toISOString().split('T')[0];
+            let history = JSON.parse(localStorage.getItem("stepHistory")) || {};
+            history[dateKey] = steps;
+            localStorage.setItem("stepHistory", JSON.stringify(history));
+            
+            renderCharts();
+        }
+
+        function switchView(view, element) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            element.classList.add('active');
+            currentView = view;
+            renderCharts();
+        }
+
+        function renderCharts() {
+            let history = JSON.parse(localStorage.getItem("stepHistory")) || {};
+            let labels = []; let data = []; let color = "#00d2ff";
+
+            if (currentView === 'week') {
+                for (let i = 6; i >= 0; i--) {
+                    let d = new Date(); d.setDate(d.getDate() - i);
+                    let ds = d.toISOString().split('T')[0];
+                    labels.push(d.toLocaleDateString(undefined, { weekday: 'short' }));
+                    data.push(history[ds] || 0);
+                }
+            } else if (currentView === 'month') {
+                color = "#2ecc71";
+                for (let i = 3; i >= 0; i--) {
+                    let weekTotal = 0;
+                    for (let j = 0; j < 7; j++) {
+                        let d = new Date(); d.setDate(d.getDate() - (i * 7 + j));
+                        let ds = d.toISOString().split('T')[0];
+                        weekTotal += (history[ds] || 0);
+                    }
+                    labels.push("Week " + (4 - i));
+                    data.push(weekTotal);
+                }
+            } else {
+                color = "#f1c40f";
+                const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                let now = new Date();
+                for (let i = 11; i >= 0; i--) {
+                    let d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    let m = d.getMonth(); let y = d.getFullYear();
+                    let mTotal = 0;
+                    Object.keys(history).forEach(key => {
+                        let kd = new Date(key);
+                        if (kd.getMonth() === m && kd.getFullYear() === y) mTotal += history[key];
+                    });
+                    labels.push(months[m]); data.push(mTotal);
+                }
+            }
+            updateChart(labels, data, color);
+        }
+
+        function updateChart(labels, data, color) {
+            if (charts['mainChart']) charts['mainChart'].destroy();
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            charts['mainChart'] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{ data: data, backgroundColor: color, borderRadius: 8 }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#ccc' } },
+                        x: { grid: { display: false }, ticks: { color: '#fff' } }
+                    }
+                }
+            });
+        }
+
+        function startCounting() {
+            if (typeof DeviceMotionEvent.requestPermission === "function") {
+                DeviceMotionEvent.requestPermission().then(state => { if (state === "granted") trackSteps(); });
+            } else { trackSteps(); }
+        }
+
+       function trackSteps() {
+    document.getElementById("status").innerText = "Status: Sensors Active - Start Walking!";
+    
+    window.addEventListener("devicemotion", event => {
+        const acc = event.accelerationIncludingGravity;
+        
+        // If the phone is sending data, the numbers will change here
+        if (!acc || acc.x === null) {
+            document.getElementById("status").innerText = "Status: Hardware detected, but no data received.";
+            return;
+        }
+
+        const magnitude = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+        // ... rest of your code
+    });
+}
+            
+    </script>
+</body>
+</html>
